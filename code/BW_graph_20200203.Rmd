@@ -18,9 +18,9 @@ library(Hmisc)
 library(conflicted)
 library(nlme)
 library(effects)
-conflict_scout()
-conflict_prefer("filter", "dplyr")
-conflict_prefer("summarize", "dplyr")
+# conflict_scout()
+# conflict_prefer("filter", "dplyr")
+# conflict_prefer("summarize", "dplyr")
 ```
 
 ## function
