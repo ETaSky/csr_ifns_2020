@@ -1,0 +1,22 @@
+# rmarkdon cache files
+#############################
+**/*_cache/
+**/*_files/
+
+# OS generated files #
+######################
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# data files
+data/raw
+
+# trash
+trash/
+
+.Rproj.user

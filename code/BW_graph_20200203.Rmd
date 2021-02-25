@@ -1,0 +1,365 @@
+---
+title: "CS2019_BW"
+author: "HPSUN"
+date: "3/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## library
+```{r }
+library(tidyverse)
+library(readxl)
+library(agricolae)
+library(Hmisc)
+library(conflicted)
+library(nlme)
+library(effects)
+conflict_scout()
+conflict_prefer("filter", "dplyr")
+conflict_prefer("summarize", "dplyr")
+```
+
+## function
+```{r}
+flat_matrix = function(mat){ 
+    ### flat the matrix into dataframe with name and value.
+    res = matrix(NA, nrow = nrow(mat)*ncol(mat), ncol = 2)
+    res = as.data.frame(res)
+    colnames(res) = c("cell_name","cell_value")
+    for(nr in 1:nrow(mat)){
+        row_name = rownames(mat)[nr]
+        for(nc in 1:ncol(mat)){
+            col_name = colnames(mat)[nc]
+            nres = (nr-1)*ncol(mat) + nc
+            res[nres,"cell_name"] = paste(sort(c(row_name,col_name)),collapse = "_")
+            res[nres,"cell_value"] = mat[nr,nc]
+        }
+    }
+    res
+}
+
+```
+
+## data
+```{r message=FALSE, warning=FALSE}
+dat = read_excel("MasterMetadata-CS-SW-Oct2019-20210202-HS.xlsx",sheet = "BodyWeightRecords")
+dat = dat %>% filter(Sex != "?")
+# 3 animial was losing weight during week 4, cageID 190, need to exclude them for the analysis
+dat = dat %>% filter(!(TimePoint_Weeks == 4 & CageID == "C190"))
+
+
+dat_summary = dat %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% 
+    dplyr::summarize(BW_mean = mean(Weight_g),
+              N_sample = n(),
+              BW_sd = sd(Weight_g),
+              BW_se = BW_sd/sqrt(N_sample-1),
+              BW_max = max(Weight_g),
+              BW_min = min(Weight_g)
+              )
+
+dat_summary = dat_summary %>% 
+    group_by(TimePoint_Weeks) %>% 
+    mutate(BW_min_temp = min(BW_mean)) %>%
+    ungroup() %>%
+    mutate(N_y_temp = case_when(
+            BirthMode == "VF" & Sex == "F" ~ 9,
+            BirthMode == "VF" & Sex == "M" ~ 5,
+            BirthMode == "CSR" & Sex == "F" ~ 8,
+            BirthMode == "CSR" & Sex == "M" ~ 4,
+            BirthMode == "CS" & Sex == "F"~ 7,
+            BirthMode == "CS" & Sex == "M"~ 3),
+           N_y = BW_min_temp - N_y_temp) %>% 
+    select(-N_y_temp, - BW_min_temp)
+
+
+
+dat_stat = matrix(NA, nrow = length(unique(dat$TimePoint_Weeks))*6, ncol = 6)
+colnames(dat_stat) = c("TimePoint_Weeks", "Sex", "Comparsion", "P_val_wilcox", "Rank_diff", "P_val_kruskal")
+dat_stat = as.data.frame(dat_stat)
+for (i in sort(unique(dat$TimePoint_Weeks))){
+    for (g in c("F","M")){
+        dat_temp = dat %>% filter(TimePoint_Weeks == i, Sex == g)        
+        temp = pairwise.wilcox.test(dat_temp$Weight_g, 
+                                    dat_temp$BirthMode, 
+                                    p.adjust.method = "none", 
+                                    paired = F)
+        p_temp = flat_matrix(temp$p.value) %>% 
+            na.omit() %>% 
+            arrange(cell_name)
+        if(g == "F") {
+            nrange = (i-1)*6 + 1:3
+        }else{
+            nrange = (i-1)*6 + 4:6
+        }
+        p_kruskal = with(dat_temp, kruskal(Weight_g, BirthMode, p.adj = "none", main="dat_temp", group=F))
+        dat_stat[nrange,"TimePoint_Weeks"] = i
+        dat_stat[nrange,"Sex"] = g
+        dat_stat[nrange,"Comparsion"] = p_temp$cell_name
+        dat_stat[nrange,"P_val_wilcox"] = p_temp$cell_value
+        dat_stat[nrange,"Rank_diff"] = p_kruskal$comparison$Difference
+        dat_stat[nrange,"P_val_kruskal"] = p_kruskal$comparison$pvalue
+    } 
+} 
+
+dat_stat %>% filter(P_val_wilcox < 0.1 | P_val_kruskal < 0.1) %>% arrange(Sex, TimePoint_Weeks)
+
+
+
+```
+
+## aov + MRT
+```{r}
+dat_stat_2 = matrix(NA, nrow = 1, ncol = 18)
+colnames(dat_stat_2) = c("TimePoint_Weeks", "Sex", "BirthMode", "BW_mean", "N_sample", "BW_max", "BW_min", "boot.lo", "boot.up", "P_norm",  "lm.pval", "lm.effect","groups", "lm.lo", "lm.up", "lme.effect", "lme.lo", "lme.up")
+dat_stat_2 = as.data.frame(dat_stat_2)
+
+i = 10
+g = "F"
+
+for (i in sort(unique(dat$TimePoint_Weeks))){
+    for (g in c("F","M")){
+        dat_temp = dat %>% filter(TimePoint_Weeks == i, Sex == g)
+        wk = dat_temp %>% split(., .$BirthMode)
+        out.ci = sapply(wk, function(x){smean.cl.boot(x$Weight_g, conf.int = .95, B = 1000, na.rm = T, reps = F)}) %>% 
+            t() %>% as.data.frame() %>% rownames_to_column(var = "BirthMode") %>% 
+            rename(boot.lo = Lower, boot.up = Upper) %>% select(BirthMode, boot.lo, boot.up)
+    
+        out.norm = sapply(wk, function(x){shapiro.test(x$Weight_g)}) %>% t() %>% as.data.frame() %>% 
+            rownames_to_column(var = "BirthMode") %>% 
+            mutate(P_norm = unlist(p.value)) %>% select(BirthMode,P_norm)
+    
+        m_1 = aov(Weight_g ~ BirthMode, data = dat_temp)
+        p_m1 = summary(m_1)[[1]]["BirthMode",'Pr(>F)']
+        out_m1 = duncan.test(m_1,"BirthMode")
+        res = merge(out_m1$means, out_m1$groups, by.x = 0, by.y = 0) %>% 
+            rename(BirthMode = Row.names, BW_mean = Weight_g.x, N_sample = r, BW_max = Max, BW_min = Min) %>% 
+            select(BirthMode, BW_mean, N_sample, BW_max, BW_min, groups)
+        res = res %>% left_join(out.ci, by = "BirthMode") %>% left_join(out.norm, by = "BirthMode") %>% mutate(lm.pval = p_m1)
+        e_m1 = allEffects(m_1)
+        res_temp = cbind(e_m1$BirthMode$x, e_m1$BirthMode$fit, e_m1$BirthMode$lower, e_m1$BirthMode$upper) 
+        names(res_temp) = c("BirthMode", "lm.effect","lm.lo","lm.up")
+        res = res %>% left_join(res_temp, by = "BirthMode")
+    
+        m_2 = lme(Weight_g ~ BirthMode, random = ~1 | FamilyID, data = dat_temp, method = "REML")
+        e_m2 = allEffects(m_2)
+        res_temp = cbind(e_m2$BirthMode$x, e_m2$BirthMode$fit, e_m2$BirthMode$lower, e_m2$BirthMode$upper) 
+        names(res_temp) = c("BirthMode", "lme.effect",  "lme.lo","lme.up")
+        res = res %>% left_join(res_temp, by = "BirthMode") %>% mutate(TimePoint_Weeks = i, Sex = g) %>% 
+            select(TimePoint_Weeks, Sex, BirthMode, BW_mean, N_sample, BW_max, BW_min, boot.lo, boot.up, P_norm,  lm.pval, lm.effect, groups, lm.lo, lm.up, lme.effect, lme.lo, lme.up)
+        dat_stat_2 = rbind(dat_stat_2,res)
+    }
+}
+
+dat_stat_2 = na.omit(dat_stat_2)
+
+dat_stat_2 = dat_stat_2 %>% 
+    group_by(TimePoint_Weeks) %>% 
+    mutate(BW_min_temp = min(BW_mean)) %>%
+    ungroup() %>%
+    mutate(N_y_temp = case_when(
+            BirthMode == "VF" & Sex == "F" ~ 9,
+            BirthMode == "VF" & Sex == "M" ~ 5,
+            BirthMode == "CSR" & Sex == "F" ~ 8,
+            BirthMode == "CSR" & Sex == "M" ~ 4,
+            BirthMode == "CS" & Sex == "F"~ 7,
+            BirthMode == "CS" & Sex == "M"~ 3),
+           N_y = BW_min_temp - N_y_temp) %>% 
+    select(-N_y_temp, - BW_min_temp)
+
+
+
+
+knitr::kable(dat_stat_2 %>% filter(lm.pval < 0.05) %>% arrange(Sex, TimePoint_Weeks))
+
+
+```
+
+
+## plot
+```{r fig.height=6, fig.width=12}
+Sex.labs = c("Male","Female")
+names(Sex.labs) <- c("M","F")
+
+p1 = ggplot(data = dat_stat_2, aes(x = TimePoint_Weeks, y = BW_mean, 
+                               ymin = boot.lo, ymax = boot.up,
+                               color = BirthMode)) +
+    geom_line(aes(group = BirthMode),size = 1.5) + 
+    geom_ribbon(aes(group = BirthMode,fill = BirthMode), alpha = 0.2) + 
+    geom_text(aes(x = TimePoint_Weeks,y = N_y, label = N_sample), 
+              position = position_dodge2(width = 0.5,padding = 0.3), size = 3) +
+#    geom_line(data = dat, aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID),
+#              alpha = 0.2, inherit.aes=FALSE) + 
+#    geom_point(data = dat, aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, shape = BirthMode), 
+#               alpha = 0.5, size =1,inherit.aes=FALSE) +  
+    scale_x_continuous(breaks = seq(1, max(dat_stat_2$TimePoint_Weeks) + 1, by = 1)) + 
+    scale_y_continuous(breaks = seq(0, max(dat_stat_2$BW_max) + 1, by = 5 )) +
+    labs(x = "Week", y = "Body Weight (g)") + 
+    facet_wrap(~Sex, labeller = labeller(Sex = Sex.labs)) + 
+    theme_bw() + theme(panel.background = element_rect(fill = NA), 
+                       plot.title = element_text(hjust = 0.5), 
+                       text = element_text(face = 'bold'),
+                       strip.text = element_text(face = "bold",size=12),
+                       axis.text = element_text(face = "bold",size = 10))
+print(p1)
+
+p2 = ggplot(data = dat, aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode)) +
+    geom_smooth() + 
+    geom_text(data = dat_stat_2, aes(x = TimePoint_Weeks,y = N_y, label = N_sample), 
+              position = position_dodge2(width = 0.5,padding = 0.3), size = 3) +
+    scale_x_continuous(breaks = seq(1, max(dat_stat_2$TimePoint_Weeks) + 1, by = 1)) + 
+    scale_y_continuous(breaks = seq(0, max(dat_stat_2$BW_max) + 1, by = 5 )) +
+    labs(x = "Week", y = "Body Weight (g)") + 
+    facet_wrap(~Sex, labeller = labeller(Sex = Sex.labs)) + 
+    theme_bw() + theme(panel.background = element_rect(fill = NA), 
+                       plot.title = element_text(hjust = 0.5), 
+                       text = element_text(face = 'bold'),
+                       strip.text = element_text(face = "bold",size=12),
+                       axis.text = element_text(face = "bold",size = 10))
+
+print(p2)
+
+
+```
+
+
+## body weight gain
+```{r}
+dat = read_excel("MasterMetadata-CS-SW-Oct2019-20210202-HS.xlsx",sheet = "BodyWeightRecords")
+dat = dat %>% filter(Sex != "?")
+# 3 animial was losing weight during week 4, cageID 190, need to exclude them for the analysis
+dat = dat %>% filter(!(TimePoint_Weeks == 4 & CageID == "C190"))
+
+BWgain= dat %>% filter(TimePoint_Weeks > 2) %>% arrange(MouseID, TimePoint_Weeks) %>% group_by(MouseID) %>% mutate(BW_gain = Weight_g - Weight_g[1], N = n()) %>% filter(TimePoint_Weeks > 3)
+
+
+
+```
+
+
+
+```{r}
+BWgain_stat_2 = matrix(NA, nrow = 1, ncol = 18)
+colnames(BWgain_stat_2) = c("TimePoint_Weeks", "Sex", "BirthMode", "BWgain_mean", "N_sample", "BWgain_max", "BWgain_min", "boot.lo", "boot.up", "P_norm",  "lm.pval", "lm.effect","groups", "lm.lo", "lm.up", "lme.effect", "lme.lo", "lme.up")
+BWgain_stat_2 = as.data.frame(BWgain_stat_2)
+
+i = 10
+g = "F"
+
+for (i in sort(unique(BWgain$TimePoint_Weeks))){
+    for (g in c("F","M")){
+        dat_temp = BWgain %>% filter(TimePoint_Weeks == i, Sex == g)
+        wk = dat_temp %>% split(., .$BirthMode)
+        out.ci = sapply(wk, function(x){smean.cl.boot(x$BW_gain, conf.int = .95, B = 1000, na.rm = T, reps = F)}) %>% 
+            t() %>% as.data.frame() %>% rownames_to_column(var = "BirthMode") %>% 
+            rename(boot.lo = Lower, boot.up = Upper) %>% select(BirthMode, boot.lo, boot.up)
+    
+        out.norm = sapply(wk, function(x){shapiro.test(x$BW_gain)}) %>% t() %>% as.data.frame() %>% 
+            rownames_to_column(var = "BirthMode") %>% 
+            mutate(P_norm = unlist(p.value)) %>% select(BirthMode,P_norm)
+    
+        m_1 = aov(BW_gain ~ BirthMode, data = dat_temp)
+        p_m1 = summary(m_1)[[1]]["BirthMode",'Pr(>F)']
+        out_m1 = duncan.test(m_1,"BirthMode")
+        res = merge(out_m1$means, out_m1$groups, by.x = 0, by.y = 0) %>% 
+            rename(BirthMode = Row.names, BWgain_mean = BW_gain.x, N_sample = r, BWgain_max = Max, BWgain_min = Min) %>% 
+            select(BirthMode, BWgain_mean, N_sample, BWgain_max, BWgain_min, groups)
+        res = res %>% left_join(out.ci, by = "BirthMode") %>% left_join(out.norm, by = "BirthMode") %>% mutate(lm.pval = p_m1)
+        e_m1 = allEffects(m_1)
+        res_temp = cbind(e_m1$BirthMode$x, e_m1$BirthMode$fit, e_m1$BirthMode$lower, e_m1$BirthMode$upper) 
+        names(res_temp) = c("BirthMode", "lm.effect","lm.lo","lm.up")
+        res = res %>% left_join(res_temp, by = "BirthMode")
+    
+        m_2 = lme(BW_gain ~ BirthMode, random = ~1 | FamilyID, data = dat_temp, method = "REML")
+        e_m2 = allEffects(m_2)
+        res_temp = cbind(e_m2$BirthMode$x, e_m2$BirthMode$fit, e_m2$BirthMode$lower, e_m2$BirthMode$upper) 
+        names(res_temp) = c("BirthMode", "lme.effect",  "lme.lo","lme.up")
+        res = res %>% left_join(res_temp, by = "BirthMode") %>% mutate(TimePoint_Weeks = i, Sex = g) %>% 
+            select(TimePoint_Weeks, Sex, BirthMode, BWgain_mean, N_sample, BWgain_max, BWgain_min, boot.lo, boot.up, P_norm,  lm.pval, lm.effect, groups, lm.lo, lm.up, lme.effect, lme.lo, lme.up)
+        BWgain_stat_2 = rbind(BWgain_stat_2,res)
+    }
+}
+
+BWgain_stat_2 = na.omit(BWgain_stat_2)
+
+BWgain_stat_2 = BWgain_stat_2 %>% 
+    group_by(TimePoint_Weeks) %>% 
+    mutate(BWgain_min_temp = min(BWgain_mean)) %>%
+    ungroup() %>%
+    mutate(N_y_temp = case_when(
+            BirthMode == "VF" & Sex == "F" ~ 6,
+            BirthMode == "VF" & Sex == "M" ~ 3,
+            BirthMode == "CSR" & Sex == "F" ~ 5,
+            BirthMode == "CSR" & Sex == "M" ~ 2,
+            BirthMode == "CS" & Sex == "F"~ 4,
+            BirthMode == "CS" & Sex == "M"~ 1),
+           N_y = BWgain_min_temp - N_y_temp) %>% 
+    select(-N_y_temp, - BWgain_min_temp)
+
+knitr::kable(BWgain_stat_2 %>% filter(lm.pval < 0.05) %>% arrange(Sex, TimePoint_Weeks))
+```
+
+
+## plot
+```{r fig.height=6, fig.width=12}
+Sex.labs = c("Male","Female")
+names(Sex.labs) <- c("M","F")
+
+p1 = ggplot(data = BWgain_stat_2, aes(x = TimePoint_Weeks, y = BWgain_mean, 
+                               ymin = boot.lo, ymax = boot.up,
+                               color = BirthMode)) +
+    geom_line(aes(group = BirthMode),size = 1.5) + 
+    geom_ribbon(aes(group = BirthMode,fill = BirthMode), alpha = 0.2) + 
+    geom_text(aes(x = TimePoint_Weeks,y = N_y, label = N_sample), 
+              position = position_dodge2(width = 0.5,padding = 0.3), size = 3) +
+#    geom_line(data = dat, aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID), alpha = 0.2, inherit.aes=FALSE) + 
+#    geom_point(data = dat, aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, shape = BirthMode), alpha = 0.5, size =1,inherit.aes=FALSE) +  
+    scale_x_continuous(breaks = seq(1, max(BWgain_stat_2$TimePoint_Weeks) + 1, by = 1)) + 
+    scale_y_continuous(breaks = seq(0, max(BWgain_stat_2$BWgain_max) + 1, by = 5 )) +
+    labs(x = "Week", y = "Body Weight Gain (g)") + 
+    facet_wrap(~Sex, labeller = labeller(Sex = Sex.labs)) + 
+    theme_bw() + theme(panel.background = element_rect(fill = NA), 
+                       plot.title = element_text(hjust = 0.5), 
+                       text = element_text(face = 'bold'),
+                       strip.text = element_text(face = "bold",size=12),
+                       axis.text = element_text(face = "bold",size = 10))
+print(p1)
+#y_zoom = max(dat_summary[which(dat_summary$TimePoint_Weeks==6),"BW_max"]) + 5
+#p1 + coord_cartesian(xlim = c(0.5, 6.5), ylim = c(-2, y_zoom))
+    
+p2 = ggplot(data = BWgain, aes(x = TimePoint_Weeks, y = BW_gain, color = BirthMode)) +
+#    geom_line(aes(group = MouseID)) + 
+    geom_smooth(method = "loess") + 
+    geom_text(data = BWgain_stat_2, aes(x = TimePoint_Weeks,y = N_y, label = N_sample), 
+              position = position_dodge2(width = 0.5,padding = 0.3), size = 3) +
+#    geom_line(data = dat, aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, group = MouseID), alpha = 0.2, inherit.aes=FALSE) + 
+#    geom_point(data = dat, aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode, shape = BirthMode), alpha = 0.5, size =1,inherit.aes=FALSE) +  
+    scale_x_continuous(breaks = seq(1, max(BWgain$TimePoint_Weeks) + 1, by = 1)) + 
+    scale_y_continuous(breaks = seq(0, max(BWgain$BW_gain) + 1, by = 5 )) +
+    labs(x = "Week", y = "Body Weight Gain (g)") + 
+    facet_wrap(~Sex, labeller = labeller(Sex = Sex.labs)) + 
+    theme_bw() + theme(panel.background = element_rect(fill = NA), 
+                       plot.title = element_text(hjust = 0.5), 
+                       text = element_text(face = 'bold'),
+                       strip.text = element_text(face = "bold",size=12),
+                       axis.text = element_text(face = "bold",size = 10))
+print(p2)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
