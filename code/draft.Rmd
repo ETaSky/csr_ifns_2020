@@ -3,6 +3,8 @@ title: "draft"
 author: "Jincheng Wang"
 date: "7/2/2020"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ## Preparation
@@ -31,6 +33,8 @@ nc <- switch(Sys.info()[['sysname']], Windows = 1, Darwin = 4, Linux = 12)
 
 source("~/Dropbox/42-JCHWANG-RUTGERS/Projects-Rutgers/Src/utils.R")
 
+BM_colors = c("#377EB8", "#4DAF4A", "#E41A1C", "purple")
+names(BM_colors) = c("VF", "CSR", "CS", "VD")
 sessionInfo()
 ```
 
@@ -54,8 +58,8 @@ ggplot(BW, aes(x = TimePoint_Days, y = Weight_g, color = BirthMode)) +
     facet_grid(.~Sex) +
     scale_x_continuous(breaks = c(seq(7, current_days, 7)), labels = c(seq(7, current_days, 7))/7) + 
     scale_y_continuous(breaks = seq(2, y_max, 4)) +
-    scale_color_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    scale_fill_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
+    scale_color_manual(values = BM_colors) +
+    scale_fill_manual(values = BM_colors) +
     labs(x = "Sampling_Week", y = "Body Weight(g)", title = "C-Section Restoration Project - Body Weight Plots-AllData") +
     theme_jw() + theme(panel.grid.minor = element_blank())
 ```
@@ -64,66 +68,88 @@ ggplot(BW, aes(x = TimePoint_Days, y = Weight_g, color = BirthMode)) +
 ```{r}
 BW_sum2 <- BW %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% summarise(N = n(), N_batch = unique(Batch) %>% length, N_family = unique(FamilyNo) %>% length(), Mean = mean(Weight_g), SE = sd(Weight_g)/sqrt(N))
 
-BW_sum2 %>% mutate(Count = paste0(N, "(", N_family, ")")) %>% select(BirthMode, Sex, TimePoint_Weeks, Count) %>% spread(key = TimePoint_Weeks, value = Count) %>% View
+BW_sum2 %>% mutate(Count = paste0(N, "(", N_family, ")")) %>% select(BirthMode, Sex, TimePoint_Weeks, Count) %>% spread(key = TimePoint_Weeks, value = Count)
 ```
 
 ### Detailed plot
 ```{r}
-date_range <- c(2, BW_sum2$TimePoint_Weeks[BW_sum2$N_family>=5] %>% max)
+#date_range <- c(2, BW_sum2$TimePoint_Weeks[BW_sum2$N_family>=5] %>% max)
+date_range <- seq(3, 15, by = 1)
 
-BW_dat <- BW %>% dplyr::filter(TimePoint_Weeks<=date_range[2], TimePoint_Weeks>=date_range[1])
+BW_dat <- BW %>% dplyr::filter(TimePoint_Weeks %in% date_range)
 
-BW_dat_stat_sum <- BW_dat %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% summarise(Mean_cl = Hmisc::smean.cl.normal(x = Weight_g) %>% paste(collapse = "-"), N = n()) %>% separate(Mean_cl, into = c("Mean", "Lwr", "Uwr"), sep = "-", convert = T) %>% ungroup
-
-BW_dat_test_sum <- split(BW_dat, f = list(BW_dat$TimePoint_Weeks, BW_dat$Sex)) %>% lapply(., function(x){(aov(Weight_g ~ BirthMode, data = x) %>% agricolae::duncan.test(trt = "BirthMode", console = T))$groups %>% rownames_to_column(var = "BirthMode")})
-
-BW_dat_test_sum2 <- lapply(seq_along(BW_dat_test_sum), function(x){BW_dat_test_sum[[x]] %>% mutate(Weeks_sex = names(BW_dat_test_sum)[[x]]) %>% separate(Weeks_sex, into = c("TimePoint_Weeks", "Sex"), sep = "\\.")}) %>% do.call("rbind",.) %>% mutate(TimePoint_Weeks = as.numeric(TimePoint_Weeks))
-
+BW_dat_sum <- BW_dat %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% summarise(Mean_cl = Hmisc::smean.cl.normal(x = Weight_g) %>% paste(collapse = "-"), N = n()) %>% separate(Mean_cl, into = c("Mean", "Lwr", "Uwr"), sep = "-", convert = T) %>% ungroup
 
 ggplot(BW_dat, aes(x = TimePoint_Weeks, y = Weight_g, color = BirthMode)) +
-    geom_point(data = BW, size = 0.5, alpha = 0.5) +
-    geom_path(data = BW, aes(group = MouseNo), color = "grey", size = 0.5, alpha = 0.5) +
-    stat_summary(data = BW %>% filter(TimePoint_Weeks>=10), geom = "point", fun = "mean", size = 1) +
-    stat_summary(data = BW %>% filter(TimePoint_Weeks>=10), geom = "line", fun = "mean", linetype = "dashed") +
-    geom_ribbon(data = BW_dat_stat_sum, aes(x = TimePoint_Weeks, y = Mean, ymin = Lwr, ymax = Uwr, fill = BirthMode), alpha = 0.3) +
-    geom_point(data = BW_dat_stat_sum, aes(x = TimePoint_Weeks, y = Mean), size = 1.5) +
-    geom_line(data = BW_dat_stat_sum, aes(x = TimePoint_Weeks, y = Mean)) +
-    geom_label_repel(data = BW_dat_test_sum2, aes(label = groups), size = 6/.pt, label.padding = 0.1) +
+    geom_smooth(aes(fill = BirthMode), alpha = 0.3) +
     facet_grid(.~Sex) +
     scale_x_continuous(breaks = c(seq(2, 18, 1))) + 
-    scale_color_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    scale_fill_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    labs(x = "Sampling_Week", y = "Body Weight(g)", title = "C-Section Restoration Project - Body Weight", subtitle = str_wrap("Mean and 95% CI were plotted; ANOVA test with duncan's multiple range tests were performed at each week ", width = 120)) +
+    scale_color_manual(values = BM_colors) +
+    scale_fill_manual(values = BM_colors) +
+    labs(x = "Sampling_Week", y = "Body Weight(g)", title = "IFNHCSR-BodyWeight", subtitle = str_wrap("LOESS smooth with 95% CI", width = 120)) +
     theme_jw() + theme(panel.grid.minor = element_blank(), aspect.ratio = 0.8, plot.title = element_text(hjust = 0))
-set_panel_size(file = "results/figs/exploratory/BW.pdf", width = unit(4, "in"), height = unit(3.2, "in"), useDingbats = F)
+set_panel_size(file = "results/figs/exploratory/BW_smooth.pdf", width = unit(3, "in"), height = unit(2.4, "in"))
+
+
+
+BW_dat_stat <- BW_dat %>% group_by(TimePoint_Weeks, Sex) %>% t_test(Weight_g~BirthMode) %>% mutate(p.adj = p.adjust(p, "fdr") %>% round(., 3), p = round(p, 3))
+
+p = ggplot(BW_dat_sum, aes(x = TimePoint_Weeks, y = Mean, color = BirthMode)) +
+    geom_point(data = BW_dat, aes(y = Weight_g), size = 0.5, alpha = 0.5) +
+    geom_path(data = BW_dat, aes(y = Weight_g, group = MouseNo), color = "grey", size = 0.5, alpha = 0.5) +
+    geom_ribbon(aes(y = Mean, ymin = Lwr, ymax = Uwr, fill = BirthMode), alpha = 0.4, color = NA) +
+    geom_point(size = 1.5) +
+    geom_line() +
+    facet_grid(.~Sex) +
+    scale_x_continuous(breaks = c(seq(2, 18, 1))) + 
+    scale_color_manual(values = BM_colors) +
+    scale_fill_manual(values = BM_colors) +
+    labs(x = "Sampling_Week", y = "Body Weight (g)", title = "IFNHCSR - Body Weight", subtitle = str_wrap("Mean and 95% CI were plotted.", width = 120)) +
+    theme_jw() + theme(panel.grid.minor = element_blank(), aspect.ratio = 0.8, plot.title = element_text(hjust = 0))
+print(p)
+set_panel_size(file = "results/figs/exploratory/BW_mean_ci.pdf", width = unit(3, "in"), height = unit(2.4, "in"))
+
+ggplot(BW_dat_stat, aes(x = TimePoint_Weeks, y = p.adj, color = paste(group1, group2, sep = "-"))) +
+    geom_point() +
+    geom_line() +
+    geom_hline(yintercept = 0.05, linetype = "dashed", color = "black") +
+    facet_grid(.~Sex) +
+    scale_x_continuous(breaks = c(seq(2, 18, 1))) +
+    scale_color_manual(values = c('#1b9e77','#d95f02','#7570b3')) +
+    labs(x = "Sampling_Week", y = "FDR adjusted p-value", title = "IFNHCSR - P-value for body weight", color = "Comparison") +
+    theme_jw() + theme(panel.grid.minor = element_blank(), aspect.ratio = 0.8, plot.title = element_text(hjust = 0))
+set_panel_size(file = "results/figs/exploratory/BW_p_fdr.pdf", width = unit(3, "in"), height = unit(2.1, "in"))
+
 ```
 
 ## Body Weight gain relative to week 3 all data
 ```{r}
-BW_f <- BW %>% group_by(MouseID) %>% filter(n()>1, 3 %in% TimePoint_Weeks) %>% ungroup() %>% filter(TimePoint_Weeks>=3) %>% arrange(TimePoint_Weeks) %>% group_by(MouseID) %>% mutate(Weight_gain = Weight_g - Weight_g[1], BirthMode = factor(BirthMode, levels = c("VF", "CSR", "CS")))
+BW_f <- BW %>% group_by(MouseID) %>% filter(n()>1, 3 %in% TimePoint_Weeks) %>% ungroup() %>% filter(TimePoint_Weeks>=3) %>% arrange(TimePoint_Weeks) %>% group_by(MouseID) %>% mutate(Weight_gain = (Weight_g - Weight_g[1])/Weight_g[1]*100, BirthMode = factor(BirthMode, levels = c("VF", "CSR", "CS")))
 BW_f %>% ungroup() %>% pivot_wider(id_cols = c(BirthMode, MouseID), names_from = TimePoint_Weeks, values_from = Weight_gain)
 
-date_range = seq(5, 15, by = 1)
+
+date_range = seq(4, 15, by = 1)
 
 BW_f_2 <- BW_f %>% filter(TimePoint_Weeks %in% date_range)
-BW_f_2 %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% summarise(N = n()) %>% pivot_wider(names_from = c(BirthMode, Sex), values_from = N)
+BW_f_2 %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% summarise(N = n()) %>% pivot_wider(id_cols = c(BirthMode, Sex), names_from = TimePoint_Weeks, values_from = N)
 
 ggplot(BW_f_2, aes(x = TimePoint_Weeks, y = Weight_gain, color = BirthMode)) +
     geom_smooth(aes(fill = BirthMode), alpha = 0.3) +
     facet_grid(.~Sex) +
     scale_x_continuous(breaks = c(seq(2, 18, 1))) + 
-    scale_color_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    scale_fill_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    labs(x = "Sampling_Week", y = "Body Weight Gain(g)", title = "C-Section Restoration Project - Body Weight Gain", subtitle = str_wrap("LOESS smooth with 95% CI", width = 120)) +
+    scale_color_manual(values = BM_colors) +
+    scale_fill_manual(values = BM_colors) +
+    labs(x = "Sampling_Week", y = "Body Weight Gain(%)", title = "IFNHCSR - Body Weight Gain", subtitle = str_wrap("LOESS smooth with 95% CI", width = 120)) +
     theme_jw() + theme(panel.grid.minor = element_blank(), aspect.ratio = 0.7, plot.title = element_text(hjust = 0))
 set_panel_size(file = "results/figs/exploratory/BW_gain_smooth.pdf", width = unit(3, "in"), height = unit(2.1, "in"))
 
-BW_f_2_sum <- BW_f_2 %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% summarise(Mean_cl = Hmisc::smean.cl.normal(x = Weight_gain) %>% paste(collapse = "-"), N = n()) %>% separate(Mean_cl, into = c("Mean", "Lwr", "Uwr"), sep = "-", convert = T) %>% ungroup
+BW_f_2_sum <- BW_f_2 %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% summarise(Mean_cl = Hmisc::smean.cl.normal(x = Weight_gain) %>% paste(collapse = "/"), N = n()) %>% separate(Mean_cl, into = c("Mean", "Lwr", "Uwr"), sep = "/", convert = T) %>% ungroup
 
-BW_f_2_sum %>% pivot_wider(id_cols = c(BirthMode, Sex), names_from = TimePoint_Weeks, values_from = N) %>% View()
+BW_f_2_sum %>% pivot_wider(id_cols = c(BirthMode, Sex), names_from = TimePoint_Weeks, values_from = N)
 
-BW_f_2_stat <- (BW_f_2 %>% group_by(TimePoint_Weeks, Sex) %>% t_test(Weight_gain~BirthMode) %>% mutate(p = round(p, 3)) %>% pivot_wider(id_cols = c(Sex, group1, group2), names_from = TimePoint_Weeks, values_from = p))[c(2, 3, 1, 5, 6, 4), ] %>% unite(Compare, group1, group2, sep = "-") %>% View
+BW_f_2_stat <- BW_f_2 %>% group_by(TimePoint_Weeks, Sex) %>% t_test(Weight_gain~BirthMode) %>% ungroup() %>% mutate(p.adj = p.adjust(p, "fdr") %>% round(., 3), p = round(p, 3)) 
 
+BW_f_2_stat_sum <- (BW_f_2_stat %>% pivot_wider(id_cols = c(Sex, group1, group2), names_from = TimePoint_Weeks, values_from = p))[c(2, 3, 1, 5, 6, 4), ] %>% unite(Compare, group1, group2, sep = "-") 
 
 p = ggplot(BW_f_2_sum, aes(x = TimePoint_Weeks, y = Mean, color = BirthMode)) +
     geom_point(data = BW_f_2, aes(y = Weight_gain), size = 0.5, alpha = 0.5) +
@@ -133,21 +159,32 @@ p = ggplot(BW_f_2_sum, aes(x = TimePoint_Weeks, y = Mean, color = BirthMode)) +
     geom_line() +
     facet_grid(.~Sex) +
     scale_x_continuous(breaks = c(seq(2, 18, 1))) + 
-    scale_color_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    scale_fill_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    labs(x = "Sampling_Week", y = "Body Weight Gain(g)", title = "C-Section Restoration Project - Body Weight Gain", subtitle = str_wrap("Mean and 95% CI were plotted.", width = 120)) +
+    scale_color_manual(values = BM_colors) +
+    scale_fill_manual(values = BM_colors) +
+    labs(x = "Sampling_Week", y = "Body Weight Gain(%)", title = "IFNHCSR - Body Weight Gain", subtitle = str_wrap("Mean and 95% CI were plotted.", width = 120)) +
     theme_jw() + theme(panel.grid.minor = element_blank(), aspect.ratio = 0.8, plot.title = element_text(hjust = 0))
 print(p)
 set_panel_size(file = "results/figs/exploratory/BW_gain_mean_ci.pdf", width = unit(3, "in"), height = unit(2.1, "in"))
+
+ggplot(BW_f_2_stat, aes(x = TimePoint_Weeks, y = p.adj, color = paste(group1, group2, sep = "-"))) +
+    geom_point() +
+    geom_line() +
+    geom_hline(yintercept = 0.05, linetype = "dashed", color = "black") +
+    facet_grid(.~Sex) +
+    scale_x_continuous(breaks = c(seq(2, 18, 1))) +
+    scale_color_manual(values = c('#1b9e77','#d95f02','#7570b3')) +
+    labs(x = "Sampling_Week", y = "FDR adjusted p-value", title = "IFNHCSR - P-value for body weight gain", color = "Comparison") +
+    theme_jw() + theme(panel.grid.minor = element_blank(), aspect.ratio = 0.8, plot.title = element_text(hjust = 0))
+set_panel_size(file = "results/figs/exploratory/BW_gain_p_fdr.pdf", width = unit(3, "in"), height = unit(2.1, "in"))
 
 ```
 
 ## Body Weight gain relative to week 3 pre-covid
 ```{r}
-BW_f <- BW %>% group_by(MouseID) %>% filter(n()>1, 3 %in% TimePoint_Weeks, !Batch %in% c("Batch9", "Batch10")) %>% ungroup() %>% filter(TimePoint_Weeks>=3) %>% arrange(TimePoint_Weeks) %>% group_by(MouseID) %>% mutate(Weight_gain = Weight_g - Weight_g[1], BirthMode = factor(BirthMode, levels = c("VF", "CSR", "CS")))
+BW_f <- BW %>% group_by(MouseID) %>% filter(n()>1, 3 %in% TimePoint_Weeks, !Batch %in% c("Batch9", "Batch10")) %>% ungroup() %>% filter(TimePoint_Weeks>=3) %>% arrange(TimePoint_Weeks) %>% group_by(MouseID) %>% mutate(Weight_gain = (Weight_g - Weight_g[1])/Weight_g[1]*100, BirthMode = factor(BirthMode, levels = c("VF", "CSR", "CS")))
 BW_f %>% ungroup() %>% pivot_wider(id_cols = c(BirthMode, MouseID), names_from = TimePoint_Weeks, values_from = Weight_gain)
 
-date_range = seq(5, 15, by = 1)
+date_range = seq(4, 15, by = 1)
 
 BW_f_2 <- BW_f %>% filter(TimePoint_Weeks %in% date_range)
 BW_f_2 %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% summarise(N = n()) %>% pivot_wider(names_from = c(BirthMode, Sex), values_from = N)
@@ -156,9 +193,9 @@ ggplot(BW_f_2, aes(x = TimePoint_Weeks, y = Weight_gain, color = BirthMode)) +
     geom_smooth(aes(fill = BirthMode), alpha = 0.3) +
     facet_grid(.~Sex) +
     scale_x_continuous(breaks = c(seq(2, 18, 1))) + 
-    scale_color_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    scale_fill_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    labs(x = "Sampling_Week", y = "Body Weight Gain(g)", title = "C-Section Restoration Project - Body Weight Gain", subtitle = str_wrap("LOESS smooth with 95% CI", width = 120)) +
+    scale_color_manual(values = BM_colors) +
+    scale_fill_manual(values = BM_colors) +
+    labs(x = "Sampling_Week", y = "Body Weight Gain(%)", title = "IFNHCSR - Body Weight Gain", subtitle = str_wrap("LOESS smooth with 95% CI", width = 120)) +
     theme_jw() + theme(panel.grid.minor = element_blank(), aspect.ratio = 0.7, plot.title = element_text(hjust = 0))
 set_panel_size(file = "results/figs/exploratory/BW_gain_smooth_precovid.pdf", width = unit(3, "in"), height = unit(2.1, "in"))
 
@@ -166,8 +203,9 @@ BW_f_2_sum <- BW_f_2 %>% group_by(TimePoint_Weeks, BirthMode, Sex) %>% summarise
 
 BW_f_2_sum %>% pivot_wider(id_cols = c(BirthMode, Sex), names_from = TimePoint_Weeks, values_from = N) %>% View()
 
-BW_f_2_stat <- (BW_f_2 %>% group_by(TimePoint_Weeks, Sex) %>% t_test(Weight_gain~BirthMode) %>% mutate(p = round(p, 3)) %>% pivot_wider(id_cols = c(Sex, group1, group2), names_from = TimePoint_Weeks, values_from = p))[c(2, 3, 1, 5, 6, 4), ] %>% unite(Compare, group1, group2, sep = "-") %>% View
+BW_f_2_stat <- BW_f_2 %>% group_by(TimePoint_Weeks, Sex) %>% t_test(Weight_gain~BirthMode) %>% ungroup() %>% mutate(p.adj = p.adjust(p, "fdr") %>% round(., 3), p = round(p, 3)) 
 
+BW_f_2_stat_sum <- (BW_f_2_stat %>% pivot_wider(id_cols = c(Sex, group1, group2), names_from = TimePoint_Weeks, values_from = p))[c(2, 3, 1, 5, 6, 4), ] %>% unite(Compare, group1, group2, sep = "-") 
 
 p = ggplot(BW_f_2_sum, aes(x = TimePoint_Weeks, y = Mean, color = BirthMode)) +
     geom_point(data = BW_f_2, aes(y = Weight_gain), size = 0.5, alpha = 0.5) +
@@ -177,9 +215,9 @@ p = ggplot(BW_f_2_sum, aes(x = TimePoint_Weeks, y = Mean, color = BirthMode)) +
     geom_line() +
     facet_grid(.~Sex) +
     scale_x_continuous(breaks = c(seq(2, 18, 1))) + 
-    scale_color_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    scale_fill_manual(values = c("#377EB8", "#4DAF4A", "#E41A1C")) +
-    labs(x = "Sampling_Week", y = "Body Weight Gain(g)", title = "C-Section Restoration Project - Body Weight Gain", subtitle = str_wrap("Mean and 95% CI were plotted.", width = 120)) +
+    scale_color_manual(values = BM_colors) +
+    scale_fill_manual(values = BM_colors) +
+    labs(x = "Sampling_Week", y = "Body Weight Gain(%)", title = "IFNHCSR - Body Weight Gain", subtitle = str_wrap("Mean and 95% CI were plotted.", width = 120)) +
     theme_jw() + theme(panel.grid.minor = element_blank(), aspect.ratio = 0.8, plot.title = element_text(hjust = 0))
 print(p)
 set_panel_size(file = "results/figs/exploratory/BW_gain_mean_ci_precovid.pdf", width = unit(3, "in"), height = unit(2.1, "in"))
