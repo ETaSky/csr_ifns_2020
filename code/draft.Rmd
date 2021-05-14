@@ -178,19 +178,20 @@ ggplot(BW_f_2_stat, aes(x = TimePoint_Weeks, y = p.adj, color = paste(group1, gr
 set_panel_size(file = "results/figs/exploratory/BW_gain_p_fdr.pdf", width = unit(3, "in"), height = unit(2.1, "in"))
 
 ```
-
+## Responders vs Non-responders
 ```{r}
-n_sd = 1.5
+n_sd = 1
 
 BW_f_vf_range = BW_f %>% ungroup %>% filter(BirthMode=="VF") %>% group_by(Sex, TimePoint_Weeks) %>% summarise(summ = Hmisc::smean.sdl(Weight_g, mult = n_sd) %>% paste(collapse = ";")) %>% separate(summ, into = c("vf_mean", "vf_ll", "vf_ul"), sep = ";")
 
 BW_f_3 = merge(BW_f, BW_f_vf_range, by = c("Sex", "TimePoint_Weeks")) %>% filter(TimePoint_Weeks<=15) %>% mutate(Flag = ifelse(Weight_g > vf_ul, "Overweight", ifelse(Weight_g < vf_ll, "Underweight", "Normal")))
 
-ggplot(BW_f_3, aes(x = TimePoint_Weeks, y = Weight_g)) +
-    geom_point(size = 1.5, aes(color = Flag)) +
-    geom_line(aes(group = MouseID, color = Flag)) +
-    stat_summary(data = BW_f_3 %>% filter(BirthMode=="VF") %>% select(-BirthMode), geom = "ribbon", fun.data = "mean_sdl", fun.args = list(mult = n_sd), fill = "#377EB8", alpha = 0.3) +
-    stat_summary(data = BW_f_3 %>% filter(BirthMode=="VF") %>% select(-BirthMode), geom = "line", fun = "mean", color = "#377EB8", size = 1) +
+ggplot(BW_f_3 %>% mutate(BirthMode = factor(BirthMode, levels = c("CS", "CSR", "VF"))), aes(x = TimePoint_Weeks, y = Weight_g)) +
+    geom_point(size = 1, aes(color = Flag)) +
+    geom_line(aes(group = MouseID, color = Flag), size = 0.3) +
+    stat_summary(data = BW_f_3 %>% filter(BirthMode=="VF") %>% select(-BirthMode), geom = "ribbon", fun.data = "mean_sdl", fun.args = list(mult = n_sd), fill = "#377EB8", alpha = 0.2) +
+    stat_summary(data = BW_f_3 %>% filter(BirthMode=="VF") %>% select(-BirthMode), geom = "line", fun = "mean", color = "#377EB8", size = 2) +
+    annotate("segment", x=-Inf, xend = Inf, y = -Inf, yend = -Inf) +
     #stat_summary(data = BW_f %>% filter(BirthMode=="CS") %>% select(-BirthMode), geom = "ribbon", fun.data = "mean_sdl", fun.args = list(mult = n_sd), fill = "#E41A1C", alpha = 0.3) +
     #stat_summary(data = BW_f %>% filter(BirthMode=="CS") %>% select(-BirthMode), geom = "line", fun.y = "mean", color = "#E41A1C", size = 1) +
     facet_grid(Sex ~ BirthMode) +
@@ -199,21 +200,28 @@ ggplot(BW_f_3, aes(x = TimePoint_Weeks, y = Weight_g)) +
     scale_x_continuous(breaks = seq(4, 15, 2)) +
     labs(x = "Weeks", y = "Body Weight (g)")
 
-BW_f_3 %>% group_by(Sex, BirthMode, MouseID) %>% filter(TimePoint_Weeks>=6) %>% summarise(N = n(), Pct_over = sum(Flag=="Overweight")/N, Pct_under = sum(Flag=="Underweight")/N) %>% mutate(Over = Pct_over>=0.7, Under = Pct_under>=0.7) %>% group_by(Sex, BirthMode) %>% summarise(N_sub = n(), N_over = sum(Over), N_under = sum(Under)) %>% mutate(OR_over = N_over/(N_sub-N_over)/(N_over[1]/(N_sub[1]-N_over[1])))
+
+BW_f_3_or_dat <- BW_f_3 %>% group_by(Sex, BirthMode, MouseID) %>% filter(TimePoint_Weeks>=6) %>% summarise(N = n(), Pct_over = sum(Flag=="Overweight")/N, Pct_under = sum(Flag=="Underweight")/N) %>% mutate(Over = Pct_over>=0.7, Under = Pct_under>=0.7) %>% group_by(Sex, BirthMode) %>% summarise(N_sub = n(), N_over = sum(Over), N_under = sum(Under)) %>% ungroup() 
+
+BW_f_3_or <- BW_f_3_or_dat %>% split(., .$Sex) %>% lapply(., function(y){y %>% mutate(N_normal = N_sub - N_over - N_under) %>% select(BirthMode, N_normal, N_over) %>% column_to_rownames(var = "BirthMode") %>% as.matrix() %>% oddsratio.fisher()})
+
+lapply(BW_f_3_or, function(x){merge(merge(as.data.frame(x$data)[1:3, 1:2], as.data.frame(x$measure), by = 0), as.data.frame(x$p.value)[2], by.x = 1, by.y = 0)}) %>% data.table::rbindlist(idcol = "Sex")
+
 ```
 
 ```{r}
-n_sd = 1.5
+n_sd = 1
 
 BW_f_vf_range = BW_f %>% ungroup %>% filter(BirthMode=="VF") %>% group_by(Sex, TimePoint_Weeks) %>% summarise(summ = Hmisc::smean.sdl(Weight_gain, mult = n_sd) %>% paste(collapse = ";")) %>% separate(summ, into = c("vf_mean", "vf_ll", "vf_ul"), sep = ";", convert = T)
 
 BW_f_4 = merge(BW_f, BW_f_vf_range, by = c("Sex", "TimePoint_Weeks")) %>% ungroup %>% filter(TimePoint_Weeks<=15) %>% mutate(Flag = ifelse(Weight_gain > vf_ul, "Overweight", ifelse(Weight_gain < vf_ll, "Underweight", "Normal")))
 
-ggplot(BW_f_4, aes(x = TimePoint_Weeks, y = Weight_gain)) +
-    geom_point(size = 1.5, aes(color = Flag)) +
-    geom_line(aes(group = MouseID, color = Flag)) +
-    stat_summary(data = BW_f_4 %>% filter(BirthMode=="VF") %>% select(-BirthMode), geom = "ribbon", fun.data = "mean_sdl", fun.args = list(mult = n_sd), fill = "#377EB8", alpha = 0.3) +
-    stat_summary(data = BW_f_4 %>% filter(BirthMode=="VF") %>% select(-BirthMode), geom = "line", fun = "mean", color = "#377EB8", size = 1) +
+ggplot(BW_f_4 %>% mutate(BirthMode = factor(BirthMode, levels = c("CS", "CSR", "VF"))), aes(x = TimePoint_Weeks, y = Weight_gain)) +
+    geom_point(size = 1, aes(color = Flag)) +
+    geom_line(aes(group = MouseID, color = Flag), size = 0.3) +
+    stat_summary(data = BW_f_4 %>% filter(BirthMode=="VF") %>% select(-BirthMode), geom = "ribbon", fun.data = "mean_sdl", fun.args = list(mult = n_sd), fill = "#377EB8", alpha = 0.2) +
+    stat_summary(data = BW_f_4 %>% filter(BirthMode=="VF") %>% select(-BirthMode), geom = "line", fun = "mean", color = "#377EB8", size = 2) +
+    annotate("segment", x=-Inf, xend = Inf, y = -Inf, yend = -Inf) +
     #stat_summary(data = BW_f %>% filter(BirthMode=="CS") %>% select(-BirthMode), geom = "ribbon", fun.data = "mean_sdl", fun.args = list(mult = n_sd), fill = "#E41A1C", alpha = 0.3) +
     #stat_summary(data = BW_f %>% filter(BirthMode=="CS") %>% select(-BirthMode), geom = "line", fun.y = "mean", color = "#E41A1C", size = 1) +
     facet_grid(Sex ~ BirthMode) +
@@ -222,7 +230,12 @@ ggplot(BW_f_4, aes(x = TimePoint_Weeks, y = Weight_gain)) +
     scale_x_continuous(breaks = seq(4, 15, 2)) +
     labs(x = "Weeks", y = "Body Weight gain(% to week 3 body weight)")
 
-BW_f_4 %>% group_by(Sex, BirthMode, MouseID) %>% filter(TimePoint_Weeks>=6) %>% summarise(N = n(), Pct_over = sum(Flag=="Overweight")/N, Pct_under = sum(Flag=="Underweight")/N) %>% mutate(Over = Pct_over>=0.7, Under = Pct_under>=0.7) %>% group_by(Sex, BirthMode) %>% summarise(N_sub = n(), N_over = sum(Over), N_under = sum(Under)) %>% mutate(OR_over = N_over/(N_sub-N_over)/(N_over[1]/(N_sub[1]-N_over[1])))
+
+BW_f_4_or_dat <- BW_f_4 %>% group_by(Sex, BirthMode, MouseID) %>% filter(TimePoint_Weeks>=6) %>% summarise(N = n(), Pct_over = sum(Flag=="Overweight")/N, Pct_under = sum(Flag=="Underweight")/N) %>% mutate(Over = Pct_over>=0.7, Under = Pct_under>=0.7) %>% group_by(Sex, BirthMode) %>% summarise(N_sub = n(), N_over = sum(Over), N_under = sum(Under)) %>% ungroup() 
+
+BW_f_4_or <- BW_f_4_or_dat %>% split(., .$Sex) %>% lapply(., function(y){y %>% mutate(N_normal = N_sub - N_over - N_under) %>% select(BirthMode, N_normal, N_over) %>% column_to_rownames(var = "BirthMode") %>% as.matrix() %>% oddsratio.fisher()})
+
+lapply(BW_f_4_or, function(x){merge(merge(as.data.frame(x$data)[1:3, 1:2], as.data.frame(x$measure), by = 0), as.data.frame(x$p.value)[2], by.x = 1, by.y = 0)}) %>% data.table::rbindlist(idcol = "Sex")
 ```
 
 ## Body Weight gain relative to week 3 pre-covid
